@@ -93,7 +93,6 @@ with st.sidebar:
 
 # --- 4. FETCH DATA (Global) ---
 try:
-    # REPAIR: Changed "videos" to "videos_inventory"
     response = supabase.table("videos_inventory").select("*").execute()
     all_videos = response.data
     total_videos = len(all_videos)
@@ -109,7 +108,6 @@ except:
 if page == "Dashboard":
     st.title("📊 Analytics Dashboard")
     
-    # Top Metrics
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Processed Videos", total_videos)
@@ -120,7 +118,6 @@ if page == "Dashboard":
     
     st.divider()
     
-    # Detailed Data Table
     try:
         if all_videos:
             df = pd.DataFrame(all_videos)
@@ -210,13 +207,12 @@ elif page == "Import Video":
                         file_bytes = uploaded_file.getvalue()
                         supabase.storage.from_("videos").upload(file_name, file_bytes, {"content-type": uploaded_file.type})
                         
-                        # REPAIR: Changed to "videos_inventory"
+                        # --- FIX: REMOVED USER_EMAIL ---
                         supabase.table("videos_inventory").insert({
                             "file_name": file_name,
                             "title": video_title,
                             "category": video_category,
-                            "price": video_price,
-                            "user_email": st.session_state.user.user.email
+                            "price": video_price
                         }).execute()
                         st.success("✅ Upload Complete!")
                     except Exception as e:
@@ -260,13 +256,12 @@ elif page == "Import Video":
                             cloud_name = f"yt_{timestamp}.mp4"
                             supabase.storage.from_("videos").upload(cloud_name, file_bytes, {"content-type": "video/mp4"})
                             
-                            # REPAIR: Changed to "videos_inventory"
+                            # --- FIX: REMOVED USER_EMAIL ---
                             supabase.table("videos_inventory").insert({
                                 "file_name": cloud_name,
                                 "title": video_title,
                                 "category": "Social Import",
-                                "price": "$50",
-                                "user_email": st.session_state.user.user.email
+                                "price": "$50"
                             }).execute()
                         status_box.write("🧹 Cleaning up...")
                         os.remove(final_filename)
@@ -276,7 +271,7 @@ elif page == "Import Video":
                 except Exception as e:
                     status_box.error(f"Something went wrong: {e}")
 
-    # --- VIEW D: SHIPPING FORM ---
+    # --- VIEW D: SHIPPING FORM (Restored) ---
     elif st.session_state.import_view == "shipping_form":
         st.title("🚚 Hard Drive Logistics")
         if st.button("← Back to Methods"):
@@ -299,7 +294,7 @@ elif page == "Import Video":
                 except:
                      st.info("Simulation: Request received (Database table 'service_requests' missing)")
 
-    # --- VIEW E: S3 CONFIG FORM ---
+    # --- VIEW E: S3 CONFIG FORM (Restored) ---
     elif st.session_state.import_view == "s3_form":
         st.title("🔶 Configure Amazon S3")
         if st.button("← Back to Methods"):
@@ -320,7 +315,7 @@ elif page == "Import Video":
                 except:
                     st.info("Simulation: Config saved (Database table 'service_requests' missing)")
 
-    # --- VIEW F: CLOUD STORAGE FORM ---
+    # --- VIEW F: CLOUD STORAGE FORM (Restored) ---
     elif st.session_state.import_view == "cloud_form":
         st.title("📦 Import from Cloud Storage")
         st.info("Paste a public shared link from Dropbox or Google Drive.")
@@ -343,7 +338,7 @@ elif page == "Import Video":
                 except:
                     st.info("Simulation: Link received (Database table 'service_requests' missing)")
 
-    # --- VIEW G: MIGRATION FORM ---
+    # --- VIEW G: MIGRATION FORM (Restored) ---
     elif st.session_state.import_view == "migrate_form":
         st.title("🔄 Mass Data Migration")
         st.info("Request a server-to-server migration for large datasets (>1TB).")
@@ -389,7 +384,7 @@ elif page == "Marketplace":
             vid_id = video.get('id', index)
             file_name = video['file_name']
             
-            # REPAIR: Helper to safely get URL
+            # Helper to safely get URL
             public_url = supabase.storage.from_("videos").get_public_url(file_name)
             
             with cols[index % 2]:
