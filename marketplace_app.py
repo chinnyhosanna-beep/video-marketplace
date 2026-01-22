@@ -207,7 +207,7 @@ elif page == "Import Video":
             st.rerun()
 
         # 1. File Uploader
-        uploaded_file = st.file_uploader("Drop video here to auto-generate metadata", type=['mp4', 'mov'])
+        uploaded_file = st.file_uploader("Drop video here to auto-generate metadata", type=['mp4', 'mov', 'mkv', 'avi'])
 
         # 2. AI Processing Block
         if uploaded_file:
