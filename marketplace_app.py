@@ -5,6 +5,7 @@ import time
 import os
 import glob
 import pandas as pd
+import google.generativeai as genai  # <--- NEW AI BRAIN
 
 # Try to import the downloader logic
 try:
@@ -17,8 +18,15 @@ except ImportError:
 try:
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["key"]
+    
+    # NEW: Configure the AI
+    genai.configure(api_key=st.secrets["google"]["api_key"])
+    
 except FileNotFoundError:
     st.error("⚠️ Secrets file not found! Did you create .streamlit/secrets.toml?")
+    st.stop()
+except Exception as e:
+    st.error(f"⚠️ Configuration Error: {e}")
     st.stop()
 
 supabase: Client = create_client(url, key)
@@ -33,6 +41,8 @@ if 'import_view' not in st.session_state:
     st.session_state.import_view = "grid"
 if "user" not in st.session_state:
     st.session_state.user = None
+if "ai_metadata" not in st.session_state:
+    st.session_state.ai_metadata = {}
 
 # Custom CSS
 st.markdown("""
@@ -146,8 +156,8 @@ elif page == "Import Video":
         with c1:
             with st.container(border=True):
                 st.subheader("☁️ Upload Videos")
-                st.caption("Direct file upload.")
-                if st.button("Use Uploader"):
+                st.caption("AI Auto-Tagging & Upload.")
+                if st.button("Use AI Uploader"):
                     st.session_state.import_view = "upload_tool"
                     st.rerun()
         with c2:
@@ -189,34 +199,96 @@ elif page == "Import Video":
                     st.session_state.import_view = "migrate_form"
                     st.rerun()
 
-    # --- VIEW B: UPLOAD TOOL ---
+    # --- VIEW B: UPLOAD TOOL (UPDATED WITH AI) ---
     elif st.session_state.import_view == "upload_tool":
-        st.title("☁️ Upload Videos")
+        st.title("☁️ AI Smart Upload")
         if st.button("← Back to Methods"):
             st.session_state.import_view = "grid"
             st.rerun()
-        with st.form("upload_form"):
-            uploaded_file = st.file_uploader("Drop file here", type=['mp4', 'mov'])
-            video_title = st.text_input("Video Title")
-            video_category = st.selectbox("Category", ["Nature", "Tech", "People", "Business", "Abstract"])
-            video_price = st.text_input("Price", value="$50")
-            if st.form_submit_button("Start Upload"):
-                if uploaded_file:
+
+        # 1. File Uploader
+        uploaded_file = st.file_uploader("Drop video here to auto-generate metadata", type=['mp4', 'mov'])
+
+        # 2. AI Processing Block
+        if uploaded_file:
+            st.info("ℹ️ Video detected. Click 'Analyze' to let AI write the title and tags.")
+            
+            # Button to trigger Gemini
+            if st.button("✨ Analyze Video with AI"):
+                try:
+                    with st.spinner("🤖 Uploading to Gemini & Analyzing frames..."):
+                        # Save temp file for Gemini
+                        temp_filename = f"temp_{int(time.time())}.mp4"
+                        with open(temp_filename, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+
+                        # Upload to Gemini
+                        video_file = genai.upload_file(path=temp_filename)
+
+                        # Wait for processing
+                        while video_file.state.name == "PROCESSING":
+                            time.sleep(2)
+                            video_file = genai.get_file(video_file.name)
+
+                        if video_file.state.name == "FAILED":
+                            st.error("AI failed to process video.")
+                        else:
+                            # Generate Content
+                            model = genai.GenerativeModel('gemini-1.5-flash')
+                            prompt = "Analyze this video. Return a JSON-like string with: Title (short/catchy), Summary (1 sentence), and Category (Nature, Tech, People, Business, or Abstract)."
+                            response = model.generate_content([video_file, prompt])
+                            
+                            # Store result in session state so it doesn't disappear
+                            st.session_state.ai_metadata = {
+                                "raw_analysis": response.text,
+                                "timestamp": datetime.now()
+                            }
+                            st.success("Analysis Complete!")
+                            
+                            # Cleanup Temp File
+                            os.remove(temp_filename)
+
+                except Exception as e:
+                    st.error(f"AI Error: {e}")
+
+            # 3. Final Submission Form
+            with st.form("upload_form"):
+                st.write("### Edit & Confirm")
+                
+                # Check if we have AI data to pre-fill
+                pre_fill_desc = ""
+                if "raw_analysis" in st.session_state.ai_metadata:
+                    st.info("💡 Suggestions populated from AI analysis.")
+                    pre_fill_desc = st.session_state.ai_metadata["raw_analysis"]
+
+                video_title = st.text_input("Video Title", value="New Video")
+                video_category = st.selectbox("Category", ["Nature", "Tech", "People", "Business", "Abstract"])
+                video_price = st.text_input("Price", value="$50")
+                video_desc = st.text_area("Description / AI Analysis", value=pre_fill_desc, height=150)
+                
+                if st.form_submit_button("🚀 Upload to Marketplace"):
                     try:
+                        # Upload to Supabase Storage
                         file_name = f"video_{datetime.now().timestamp()}.mp4"
+                        # Reset pointer
+                        uploaded_file.seek(0)
                         file_bytes = uploaded_file.getvalue()
+                        
                         supabase.storage.from_("videos").upload(file_name, file_bytes, {"content-type": uploaded_file.type})
                         
-                        # --- FIX: REMOVED USER_EMAIL ---
+                        # Insert into Database
                         supabase.table("videos_inventory").insert({
                             "file_name": file_name,
                             "title": video_title,
                             "category": video_category,
                             "price": video_price
+                            # Note: If your DB has a 'description' column, add: "description": video_desc
                         }).execute()
+                        
                         st.success("✅ Upload Complete!")
+                        st.session_state.ai_metadata = {} # Clear AI memory
                     except Exception as e:
-                        st.error(f"Error: {e}")
+                        st.error(f"Upload Error: {e}")
 
     # --- VIEW C: YOUTUBE IMPORT ---
     elif st.session_state.import_view == "youtube_form":
