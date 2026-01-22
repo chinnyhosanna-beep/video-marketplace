@@ -1,3 +1,4 @@
 streamlit
 supabase
 yt-dlp
+google-generativeai
