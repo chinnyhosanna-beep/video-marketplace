@@ -67,7 +67,7 @@ with st.sidebar:
             
         st.divider()
         # Menu for Logged In Users
-        page = st.radio("Go to", ["Marketplace", "Dashboard", "Import Video"])
+        page = st.radio("Go to", ["Marketplace", "Dashboard", "My Uploads", "Import Video"])
 
     # If Guest: Show Login/Signup Forms
     else:
@@ -84,17 +84,14 @@ with st.sidebar:
                     user = supabase.auth.sign_in_with_password({"email": email_in, "password": pass_in})
                     st.session_state.user = user
                     
-                    # --- UPDATE A: Load Past Purchases from Database ---
+                    # --- Load Past Purchases ---
                     try:
                         current_email = user.user.email
-                        # Fetch purchases for this user
                         data = supabase.table("purchases").select("video_id").eq("user_email", current_email).execute()
-                        # Update the session state list with the IDs found
                         st.session_state.purchased_videos = [item['video_id'] for item in data.data]
                     except Exception as e:
-                        print(f"Database Fetch Error (Table might not exist yet): {e}")
-                    # ---------------------------------------------------
-
+                        print(f"Database Fetch Error: {e}")
+                    
                     st.success("Welcome back!")
                     time.sleep(1)
                     st.rerun()
@@ -133,18 +130,18 @@ if page == "Dashboard":
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Processed Videos", total_videos)
+        st.metric("Total Platform Videos", total_videos)
     with col2:
         st.metric("Total Value", f"${total_videos * 50}")
     with col3:
-        st.metric("Active Licenses", len(st.session_state.purchased_videos))
+        st.metric("Your Active Licenses", len(st.session_state.purchased_videos))
     
     st.divider()
     
     try:
         if all_videos:
             df = pd.DataFrame(all_videos)
-            st.subheader("Inventory")
+            st.subheader("Inventory Overview")
             st.dataframe(df)
             
             if 'category' in df.columns:
@@ -154,6 +151,44 @@ if page == "Dashboard":
             st.info("No data to show yet.")
     except Exception as e:
         st.error(f"Error loading dashboard: {e}")
+
+# ==========================================
+# PAGE: MY UPLOADS (NEW)
+# ==========================================
+elif page == "My Uploads":
+    st.title("📂 My Uploaded Videos")
+    
+    if st.session_state.user:
+        current_user_id = st.session_state.user.user.id
+        
+        # Filter videos where owner_id matches current user
+        my_videos = [v for v in all_videos if v.get('owner_id') == current_user_id]
+        
+        if my_videos:
+            st.write(f"You have uploaded **{len(my_videos)}** videos.")
+            
+            # Display as a table first
+            st.dataframe(pd.DataFrame(my_videos))
+            
+            st.divider()
+            
+            # Display as Grid
+            cols = st.columns(3)
+            for index, video in enumerate(my_videos):
+                file_name = video['file_name']
+                public_url = supabase.storage.from_("videos").get_public_url(file_name)
+                
+                with cols[index % 3]:
+                    with st.container(border=True):
+                        st.video(public_url)
+                        st.write(f"**{video.get('title', 'Untitled')}**")
+                        st.caption(f"Status: Active | Price: {video.get('price')}")
+                        st.button("Edit Metadata", key=f"edit_{index}") # Placeholder for future edit feature
+        else:
+            st.info("You haven't uploaded any videos yet. Go to 'Import Video' to start!")
+            
+    else:
+        st.warning("Please log in to view your uploads.")
 
 # ==========================================
 # PAGE: IMPORT VIDEO (Protected)
@@ -212,33 +247,27 @@ elif page == "Import Video":
                     st.session_state.import_view = "migrate_form"
                     st.rerun()
 
-    # --- VIEW B: UPLOAD TOOL (UPDATED WITH AI) ---
+    # --- VIEW B: UPLOAD TOOL (UPDATED WITH OWNER_ID) ---
     elif st.session_state.import_view == "upload_tool":
         st.title("☁️ AI Smart Upload")
         if st.button("← Back to Methods"):
             st.session_state.import_view = "grid"
             st.rerun()
 
-        # 1. File Uploader
         uploaded_file = st.file_uploader("Drop video here to auto-generate metadata", type=['mp4', 'mov', 'mkv', 'avi'])
 
-        # 2. AI Processing Block
         if uploaded_file:
             st.info("ℹ️ Video detected. Click 'Analyze' to let AI write the title and tags.")
             
-            # Button to trigger Gemini
             if st.button("✨ Analyze Video with AI"):
                 try:
                     with st.spinner("🤖 Uploading to Gemini & Analyzing frames..."):
-                        # Save temp file for Gemini
                         temp_filename = f"temp_{int(time.time())}.mp4"
                         with open(temp_filename, "wb") as f:
                             f.write(uploaded_file.getbuffer())
 
-                        # Upload to Gemini
                         video_file = genai.upload_file(path=temp_filename)
 
-                        # Wait for processing
                         while video_file.state.name == "PROCESSING":
                             time.sleep(2)
                             video_file = genai.get_file(video_file.name)
@@ -246,29 +275,23 @@ elif page == "Import Video":
                         if video_file.state.name == "FAILED":
                             st.error("AI failed to process video.")
                         else:
-                            # Generate Content
                             model = genai.GenerativeModel('gemini-1.5-flash')
                             prompt = "Analyze this video. Return a JSON-like string with: Title (short/catchy), Summary (1 sentence), and Category (Nature, Tech, People, Business, or Abstract)."
                             response = model.generate_content([video_file, prompt])
                             
-                            # Store result in session state so it doesn't disappear
                             st.session_state.ai_metadata = {
                                 "raw_analysis": response.text,
                                 "timestamp": datetime.now()
                             }
                             st.success("Analysis Complete!")
-                            
-                            # Cleanup Temp File
                             os.remove(temp_filename)
 
                 except Exception as e:
                     st.error(f"AI Error: {e}")
 
-            # 3. Final Submission Form
             with st.form("upload_form"):
                 st.write("### Edit & Confirm")
                 
-                # Check if we have AI data to pre-fill
                 pre_fill_desc = ""
                 if "raw_analysis" in st.session_state.ai_metadata:
                     st.info("💡 Suggestions populated from AI analysis.")
@@ -281,24 +304,25 @@ elif page == "Import Video":
                 
                 if st.form_submit_button("🚀 Upload to Marketplace"):
                     try:
-                        # Upload to Supabase Storage
                         file_name = f"video_{datetime.now().timestamp()}.mp4"
-                        # Reset pointer
                         uploaded_file.seek(0)
                         file_bytes = uploaded_file.getvalue()
                         
                         supabase.storage.from_("videos").upload(file_name, file_bytes, {"content-type": uploaded_file.type})
                         
-                        # Insert into Database
+                        # --- NEW: SAVE OWNER ID ---
+                        owner_id = st.session_state.user.user.id if st.session_state.user else None
+                        
                         supabase.table("videos_inventory").insert({
                             "file_name": file_name,
                             "title": video_title,
                             "category": video_category,
-                            "price": video_price
+                            "price": video_price,
+                            "owner_id": owner_id  # <--- Saving who uploaded it
                         }).execute()
                         
                         st.success("✅ Upload Complete!")
-                        st.session_state.ai_metadata = {} # Clear AI memory
+                        st.session_state.ai_metadata = {} 
                     except Exception as e:
                         st.error(f"Upload Error: {e}")
 
@@ -340,11 +364,15 @@ elif page == "Import Video":
                             cloud_name = f"yt_{timestamp}.mp4"
                             supabase.storage.from_("videos").upload(cloud_name, file_bytes, {"content-type": "video/mp4"})
                             
+                            # --- NEW: SAVE OWNER ID FOR YOUTUBE IMPORTS ---
+                            owner_id = st.session_state.user.user.id if st.session_state.user else None
+                            
                             supabase.table("videos_inventory").insert({
                                 "file_name": cloud_name,
                                 "title": video_title,
                                 "category": "Social Import",
-                                "price": "$50"
+                                "price": "$50",
+                                "owner_id": owner_id # <--- Saving who imported it
                             }).execute()
                         status_box.write("🧹 Cleaning up...")
                         os.remove(final_filename)
@@ -478,25 +506,22 @@ elif page == "Marketplace":
                     if vid_id in st.session_state.purchased_videos:
                         st.link_button("⬇️ Download", public_url)
                     else:
-                        # --- UPDATE B: Save Purchase to Database & Session ---
+                        # --- Buy Logic ---
                         if st.session_state.user: 
                             if st.button("Buy License", key=f"btn_{vid_id}"):
                                 with st.spinner("Processing payment..."):
                                     try:
-                                        # 1. Insert into Supabase
                                         supabase.table("purchases").insert({
                                             "user_email": st.session_state.user.user.email,
                                             "video_id": vid_id,
                                             "price": video.get('price', '$50')
                                         }).execute()
                                         
-                                        # 2. Update Local State (so UI updates instantly)
                                         st.session_state.purchased_videos.append(vid_id)
                                         st.success("License Purchased!")
                                         time.sleep(1)
                                         st.rerun()
                                     except Exception as e:
-                                        st.error(f"Purchase failed. (Check table 'purchases' exists): {e}")
+                                        st.error(f"Purchase failed: {e}")
                         else:
                             st.warning("🔒 Log in to buy")
-                        # -----------------------------------------------------
