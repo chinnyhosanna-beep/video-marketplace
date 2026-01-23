@@ -5,7 +5,7 @@ import time
 import os
 import glob
 import pandas as pd
-import google.generativeai as genai  # <--- NEW AI BRAIN
+import google.generativeai as genai
 
 # Try to import the downloader logic
 try:
@@ -19,7 +19,7 @@ try:
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["key"]
     
-    # NEW: Configure the AI
+    # Configure the AI
     genai.configure(api_key=st.secrets["google"]["api_key"])
     
 except FileNotFoundError:
@@ -62,6 +62,7 @@ with st.sidebar:
         if st.button("Log Out"):
             supabase.auth.sign_out()
             st.session_state.user = None
+            st.session_state.purchased_videos = [] # Clear local purchases on logout
             st.rerun()
             
         st.divider()
@@ -82,11 +83,23 @@ with st.sidebar:
                 try:
                     user = supabase.auth.sign_in_with_password({"email": email_in, "password": pass_in})
                     st.session_state.user = user
+                    
+                    # --- UPDATE A: Load Past Purchases from Database ---
+                    try:
+                        current_email = user.user.email
+                        # Fetch purchases for this user
+                        data = supabase.table("purchases").select("video_id").eq("user_email", current_email).execute()
+                        # Update the session state list with the IDs found
+                        st.session_state.purchased_videos = [item['video_id'] for item in data.data]
+                    except Exception as e:
+                        print(f"Database Fetch Error (Table might not exist yet): {e}")
+                    # ---------------------------------------------------
+
                     st.success("Welcome back!")
                     time.sleep(1)
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Login Error: {e}")
 
         with tab2: # Sign Up Form
             new_email = st.text_input("Email", key="signup_email")
@@ -99,7 +112,7 @@ with st.sidebar:
                     time.sleep(1)
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Sign Up Error: {e}")
 
 # --- 4. FETCH DATA (Global) ---
 try:
@@ -282,7 +295,6 @@ elif page == "Import Video":
                             "title": video_title,
                             "category": video_category,
                             "price": video_price
-                            # Note: If your DB has a 'description' column, add: "description": video_desc
                         }).execute()
                         
                         st.success("✅ Upload Complete!")
@@ -328,7 +340,6 @@ elif page == "Import Video":
                             cloud_name = f"yt_{timestamp}.mp4"
                             supabase.storage.from_("videos").upload(cloud_name, file_bytes, {"content-type": "video/mp4"})
                             
-                            # --- FIX: REMOVED USER_EMAIL ---
                             supabase.table("videos_inventory").insert({
                                 "file_name": cloud_name,
                                 "title": video_title,
@@ -343,7 +354,7 @@ elif page == "Import Video":
                 except Exception as e:
                     status_box.error(f"Something went wrong: {e}")
 
-    # --- VIEW D: SHIPPING FORM (Restored) ---
+    # --- VIEW D: SHIPPING FORM ---
     elif st.session_state.import_view == "shipping_form":
         st.title("🚚 Hard Drive Logistics")
         if st.button("← Back to Methods"):
@@ -354,7 +365,6 @@ elif page == "Import Video":
             drive_count = st.number_input("Number of Hard Drives", min_value=1)
             address = st.text_area("Pickup Address")
             if st.form_submit_button("Submit Request"):
-                # Note: This table might not exist yet, but we keep the logic as requested
                 try:
                     supabase.table("service_requests").insert({
                         "request_type": "Shipping",
@@ -366,7 +376,7 @@ elif page == "Import Video":
                 except:
                      st.info("Simulation: Request received (Database table 'service_requests' missing)")
 
-    # --- VIEW E: S3 CONFIG FORM (Restored) ---
+    # --- VIEW E: S3 CONFIG FORM ---
     elif st.session_state.import_view == "s3_form":
         st.title("🔶 Configure Amazon S3")
         if st.button("← Back to Methods"):
@@ -387,7 +397,7 @@ elif page == "Import Video":
                 except:
                     st.info("Simulation: Config saved (Database table 'service_requests' missing)")
 
-    # --- VIEW F: CLOUD STORAGE FORM (Restored) ---
+    # --- VIEW F: CLOUD STORAGE FORM ---
     elif st.session_state.import_view == "cloud_form":
         st.title("📦 Import from Cloud Storage")
         st.info("Paste a public shared link from Dropbox or Google Drive.")
@@ -410,7 +420,7 @@ elif page == "Import Video":
                 except:
                     st.info("Simulation: Link received (Database table 'service_requests' missing)")
 
-    # --- VIEW G: MIGRATION FORM (Restored) ---
+    # --- VIEW G: MIGRATION FORM ---
     elif st.session_state.import_view == "migrate_form":
         st.title("🔄 Mass Data Migration")
         st.info("Request a server-to-server migration for large datasets (>1TB).")
@@ -468,8 +478,25 @@ elif page == "Marketplace":
                     if vid_id in st.session_state.purchased_videos:
                         st.link_button("⬇️ Download", public_url)
                     else:
-                        if st.button("Buy License", key=f"btn_{vid_id}"):
-                            with st.spinner("Buying..."):
-                                time.sleep(1)
-                                st.session_state.purchased_videos.append(vid_id)
-                                st.rerun()
+                        # --- UPDATE B: Save Purchase to Database & Session ---
+                        if st.session_state.user: 
+                            if st.button("Buy License", key=f"btn_{vid_id}"):
+                                with st.spinner("Processing payment..."):
+                                    try:
+                                        # 1. Insert into Supabase
+                                        supabase.table("purchases").insert({
+                                            "user_email": st.session_state.user.user.email,
+                                            "video_id": vid_id,
+                                            "price": video.get('price', '$50')
+                                        }).execute()
+                                        
+                                        # 2. Update Local State (so UI updates instantly)
+                                        st.session_state.purchased_videos.append(vid_id)
+                                        st.success("License Purchased!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Purchase failed. (Check table 'purchases' exists): {e}")
+                        else:
+                            st.warning("🔒 Log in to buy")
+                        # -----------------------------------------------------
