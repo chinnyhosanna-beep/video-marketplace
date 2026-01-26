@@ -1,4 +1,6 @@
 import streamlit as st
+from video_processor import process_video  # <-- Add this line
+import streamlit as st
 from supabase import create_client, Client
 from datetime import datetime
 import time
@@ -525,3 +527,32 @@ elif page == "Marketplace":
                                         st.error(f"Purchase failed: {e}")
                         else:
                             st.warning("🔒 Log in to buy")
+                            st.header("Upload New Video") # <--- This creates a header on the page
+
+# 1. The Box where users drop files
+uploaded_file = st.file_uploader("Choose a video file", type=['mp4', 'mov'])
+
+# 2. The Logic that runs when they upload
+if uploaded_file is not None:
+    # We only show the "Process" button if a file is uploaded
+    if st.button("Step 1: Process & Watermark"):
+        
+        with st.spinner("Creating preview... this takes a few seconds..."):
+            # This calls the "Engine" file we made earlier
+            result = process_video(uploaded_file)
+            
+            # If the engine works, it returns a result. If it fails, it returns "error".
+            if "error" in result:
+                st.error(f"Ouch! Something broke: {result['error']}")
+            else:
+                st.success("✅ Video ready for marketplace!")
+                
+                # Show the data we found
+                st.write("---")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Extracted Data:**")
+                    st.json(result['metadata'])
+                with col2:
+                    st.write("**Watermarked Preview:**")
+                    st.video(result['preview_path'])
