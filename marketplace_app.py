@@ -1,4 +1,22 @@
 import streamlit as st
+from supabase import create_client
+
+# 1. Setup the connection
+# This looks into your secrets.toml file to get the passwords
+try:
+    supabase_url = st.secrets["supabase"]["url"]
+    supabase_key = st.secrets["supabase"]["key"]
+
+    # Create the client (The Bridge)
+    supabase = create_client(supabase_url, supabase_key)
+
+except FileNotFoundError:
+    st.error("Secrets file not found! Please create .streamlit/secrets.toml")
+    st.stop()
+except KeyError:
+    st.error("Secrets found, but keys are missing! Check your spelling.")
+    st.stop()
+import streamlit as st
 from video_processor import process_video  # <-- Add this line
 import streamlit as st
 from supabase import create_client, Client

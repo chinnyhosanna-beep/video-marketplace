@@ -3,3 +3,4 @@ supabase
 yt-dlp
 google-generativeai
 moviepy==1.0.3
+supabase
